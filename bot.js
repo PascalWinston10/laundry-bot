@@ -22,10 +22,11 @@ if (!token) {
 // Jalankan bot dengan polling
 const bot = new TelegramBot(token, { polling: true });
 
-// Objek untuk menyimpan keranjang belanja user
-let userCarts = {};
+// Objek untuk menyimpan keranjang belanja (dipisah)
+let serviceCarts = {}; // Untuk jasa laundry
+let productCarts = {}; // Untuk produk
 
-// Objek untuk menyimpan order yang menunggu konfirmasi checkout
+// Objek untuk menyimpan order yang menunggu konfirmasi checkout (Bisa dipakai bersama)
 let pendingOrders = {};
 
 // Keyboard untuk konfirmasi checkout
@@ -40,8 +41,20 @@ const checkoutKeyboard = {
   },
 };
 
+// Keyboard untuk konfirmasi data kontak
+const contactConfirmKeyboard = {
+  reply_markup: {
+    inline_keyboard: [
+      [
+        { text: "✅ Data Benar", callback_data: "contact_confirm_yes" },
+        { text: "✏️ Ulangi Data", callback_data: "contact_confirm_no" },
+      ],
+    ],
+  },
+};
+
 // =============================
-// Data Layanan Laundry
+// Data Layanan & Produk
 // =============================
 const jasaLaundry = {
   // Nama Jasa (harus unik): { price: HARGA, unit: 'kg' atau 'pcs' }
@@ -52,14 +65,20 @@ const jasaLaundry = {
   "Boneka Besar": { price: 20000, unit: "pcs" },
 };
 
+const productsData = {
+  "Pewangi Mawar 1L": { price: 15000, unit: "pcs" },
+  "Deterjen Cair 1L": { price: 20000, unit: "pcs" },
+  "Pelembut Pakaian 1L": { price: 18000, unit: "pcs" },
+};
+
 // =============================
-// Inline Keyboard Menu Utama
+// Inline Keyboard Menu Utama (Navigasi)
 // =============================
 const mainMenu = {
   reply_markup: {
     inline_keyboard: [
-      [{ text: "👔 Daftar Layanan & Harga", callback_data: "lihat_layanan" }],
-      [{ text: "🧺 Order Laundry", callback_data: "order_laundry" }],
+      [{ text: "🧺 Order Layanan Jasa", callback_data: "nav_services" }],
+      [{ text: "🧴 Beli Produk", callback_data: "nav_products" }],
       [{ text: "📍 Info Lokasi & Jam Buka", callback_data: "info_lokasi" }],
       [{ text: "📞 Hubungi Admin", callback_data: "hubungi_admin" }],
     ],
@@ -67,27 +86,113 @@ const mainMenu = {
 };
 
 // =============================
-// Keyboard KHUSUS Saat Lihat Layanan
+// Keyboard Menu Layanan
 // =============================
-const menuKeyboard = {
+const servicesMenu = {
   reply_markup: {
     inline_keyboard: [
-      [{ text: "🧺 Order Sekarang", callback_data: "order_laundry" }],
+      [{ text: "👔 Daftar Layanan & Harga", callback_data: "lihat_layanan" }],
+      [{ text: "🧺 Order Laundry", callback_data: "order_laundry" }],
       [{ text: "« Kembali ke Menu Utama", callback_data: "menu_utama" }],
     ],
   },
 };
 
 // =============================
-// (UBAH) Fungsi untuk Membuat Keyboard Layanan (Dinamis)
+// Keyboard Menu Produk
 // =============================
+const productsMenu = {
+  reply_markup: {
+    inline_keyboard: [
+      [{ text: "👕 Daftar Produk & Harga", callback_data: "lihat_produk" }],
+      [{ text: "🛒 Order Produk", callback_data: "order_produk" }],
+      [{ text: "« Kembali ke Menu Utama", callback_data: "menu_utama" }],
+    ],
+  },
+};
+
+// =============================
+// Fungsi untuk meminta data kontak
+// =============================
+async function askForContactInfo(chatId) {
+  try {
+    await bot.sendMessage(
+      chatId,
+      `
+Silakan kirim *Nama*, *Nomor HP*, dan *Alamat Jemput*.
+
+*Mohon kirim dalam 1 pesan, dengan setiap data di baris baru (tekan Enter).*
+
+Contoh:
+Joni
+08123456789
+Jl. Mawar No. 1, Serpong
+    `,
+      { parse_mode: "Markdown" }
+    );
+
+    bot.once("text", async (contact) => {
+      if (contact.text === "/start") {
+        sendStartMessage(chatId);
+        return;
+      }
+      if (!pendingOrders[chatId]) {
+        console.error("Order tidak ditemukan saat handle contact text");
+        await bot.sendMessage(
+          chatId,
+          "Maaf, order Anda sepertinya kedaluwarsa.",
+          mainMenu
+        );
+        return;
+      }
+      pendingOrders[chatId].contactText = contact.text;
+      const lines = contact.text.split("\n");
+      const nama = lines[0] || "[Belum diisi]";
+      const hp = lines[1] || "[Belum diisi]";
+      const alamat = lines.slice(2).join("\n") || "[Belum diisi]";
+
+      await bot.sendMessage(
+        chatId,
+        `
+Mohon periksa kembali data Anda:
+
+*Nama:*
+\`\`\`
+${nama}
+\`\`\`
+*Nomor HP:*
+\`\`\`
+${hp}
+\`\`\`
+*Alamat Jemput:*
+\`\`\`
+${alamat}
+\`\`\`
+
+Apakah data di atas sudah benar?
+        `,
+        { parse_mode: "Markdown", ...contactConfirmKeyboard }
+      );
+    });
+  } catch (err) {
+    console.error("Error di askForContactInfo:", err);
+    await bot.sendMessage(
+      chatId,
+      "Waduh, ada error. Coba ulangi checkout.",
+      mainMenu
+    );
+  }
+}
+
+// =============================
+// Bagian Fungsi Order LAYANAN JASA
+// =============================
+
 function buildServicesKeyboard(chatId) {
   const keyboard = [];
-  const cart = userCarts[chatId];
+  const cart = serviceCarts[chatId];
 
-  // Tambahkan tombol untuk setiap layanan
   for (const serviceName in jasaLaundry) {
-    // (UBAH) Ganti spasi dengan '-' agar aman untuk callback_data
     const safeServiceName = serviceName.replace(/ /g, "-");
     keyboard.push([
       {
@@ -97,7 +202,6 @@ function buildServicesKeyboard(chatId) {
     ]);
   }
 
-  // Hanya tampilkan tombol checkout jika keranjang tidak kosong
   if (cart && cart.items.length > 0) {
     keyboard.push([
       {
@@ -107,7 +211,6 @@ function buildServicesKeyboard(chatId) {
     ]);
   }
 
-  // Tombol untuk membatalkan seluruh order
   keyboard.push([
     { text: "❌ Batal Order & Kembali", callback_data: "order_cancel" },
   ]);
@@ -115,10 +218,7 @@ function buildServicesKeyboard(chatId) {
   return { reply_markup: { inline_keyboard: keyboard } };
 }
 
-// =============================
-// (BARU) Fungsi untuk Menampilkan Pemilih Kuantitas
-// =============================
-async function showQuantitySelector(
+async function showServiceQuantitySelector(
   chatId,
   serviceName,
   currentQuantity,
@@ -126,27 +226,18 @@ async function showQuantitySelector(
 ) {
   const service = jasaLaundry[serviceName];
   if (!service) {
-    console.error(
-      "Layanan tidak ditemukan di showQuantitySelector:",
-      serviceName
-    );
+    console.error("Layanan tidak ditemukan:", serviceName);
     return;
   }
 
   const unit = service.unit;
-  const minQuantity = unit === "kg" ? 0.5 : 1; // Kuantitas minimum
-
-  // Pastikan kuantitas saat ini tidak di bawah minimum
-  let qty = Math.max(minQuantity, currentQuantity);
-
-  // Buat serviceName yang aman untuk callback
+  let qty = currentQuantity;
   const safeServiceName = serviceName.replace(/ /g, "-");
 
   let text = `🧺 Pilih jumlah untuk *${serviceName}*:\n\n*Jumlah Saat Ini: ${qty} ${unit}*`;
-
   let keyboard = [];
-  let row1 = []; // Baris untuk menambah
-  let row2 = []; // Baris untuk mengurangi
+  let row1 = [];
+  let row2 = [];
 
   if (unit === "kg") {
     row1.push({
@@ -157,22 +248,19 @@ async function showQuantitySelector(
       text: "+1 kg",
       callback_data: `qty_update_${safeServiceName}_${qty + 1}`,
     });
-    if (qty > 0.5) {
+    if (qty >= 0.5) {
       row2.push({
         text: "-0.5 kg",
         callback_data: `qty_update_${safeServiceName}_${Math.max(
-          minQuantity,
+          0,
           qty - 0.5
         )}`,
       });
     }
-    if (qty > 1) {
+    if (qty >= 1) {
       row2.push({
         text: "-1 kg",
-        callback_data: `qty_update_${safeServiceName}_${Math.max(
-          minQuantity,
-          qty - 1
-        )}`,
+        callback_data: `qty_update_${safeServiceName}_${Math.max(0, qty - 1)}`,
       });
     }
   } else {
@@ -185,22 +273,16 @@ async function showQuantitySelector(
       text: "+5 pcs",
       callback_data: `qty_update_${safeServiceName}_${qty + 5}`,
     });
-    if (qty > 1) {
+    if (qty >= 1) {
       row2.push({
         text: "-1 pcs",
-        callback_data: `qty_update_${safeServiceName}_${Math.max(
-          minQuantity,
-          qty - 1
-        )}`,
+        callback_data: `qty_update_${safeServiceName}_${Math.max(0, qty - 1)}`,
       });
     }
-    if (qty > 5) {
+    if (qty >= 5) {
       row2.push({
         text: "-5 pcs",
-        callback_data: `qty_update_${safeServiceName}_${Math.max(
-          minQuantity,
-          qty - 5
-        )}`,
+        callback_data: `qty_update_${safeServiceName}_${Math.max(0, qty - 5)}`,
       });
     }
   }
@@ -208,48 +290,43 @@ async function showQuantitySelector(
   keyboard.push(row1);
   if (row2.length > 0) keyboard.push(row2);
 
-  // Baris Konfirmasi dan Batal
+  if (qty > 0) {
+    keyboard.push([
+      {
+        text: `✅ Konfirmasi ${qty} ${unit}`,
+        callback_data: `qty_confirm_${safeServiceName}_${qty}`,
+      },
+    ]);
+  }
+
   keyboard.push([
-    {
-      text: `✅ Konfirmasi ${qty} ${unit}`,
-      callback_data: `qty_confirm_${safeServiceName}_${qty}`,
-    },
+    { text: "⬅️ Kembali ke Menu Layanan", callback_data: "order_cancel_item" },
   ]);
-  keyboard.push([{ text: "⬅️ Kembali ke Menu", callback_data: "qty_cancel" }]);
 
   const keyboardMarkup = { reply_markup: { inline_keyboard: keyboard } };
 
   try {
-    // Kita harus *mengedit* pesan (bukan mengirim baru)
     await bot.editMessageText(text, {
       chat_id: chatId,
-      message_id: messageId, // messageId dari tombol yg ditekan
+      message_id: messageId,
       parse_mode: "Markdown",
       ...keyboardMarkup,
     });
   } catch (e) {
-    console.error("Error di showQuantitySelector editMessageText:", e.message);
-    // Jika gagal (misal, pesan terlalu tua), kirim pesan baru sebagai fallback
-    await bot.sendMessage(chatId, text, {
-      parse_mode: "Markdown",
-      ...keyboardMarkup,
-    });
+    if (!e.message.includes("message is not modified")) {
+      console.error("Error di showServiceQuantitySelector:", e.message);
+    }
   }
 }
 
-// =============================
-// Fungsi untuk Menampilkan Menu Order
-// =============================
-async function showOrderMenu(chatId, messagePrefix = "") {
-  // Pastikan keranjang ada
-  if (!userCarts[chatId]) {
-    userCarts[chatId] = { items: [], messageId: null };
+async function showServiceOrderMenu(chatId, messagePrefix = "") {
+  if (!serviceCarts[chatId]) {
+    serviceCarts[chatId] = { items: [], messageId: null };
   }
-  const cart = userCarts[chatId];
+  const cart = serviceCarts[chatId];
 
-  // 1. Buat Teks Pesan
   let text = messagePrefix ? `${messagePrefix}\n\n` : "";
-  text += "🛒 *Keranjang Anda Saat Ini:*\n";
+  text += "🛒 *Keranjang Layanan Anda Saat Ini:*\n";
 
   if (cart.items.length === 0) {
     text += "  _(Kosong)_\n";
@@ -266,13 +343,10 @@ async function showOrderMenu(chatId, messagePrefix = "") {
   }
   text += "\n\nSilakan pilih layanan untuk ditambahkan ke keranjang:";
 
-  // 2. Buat Keyboard
   const keyboard = buildServicesKeyboard(chatId);
 
-  // 3. Kirim atau Edit Pesan
   try {
     if (cart.messageId) {
-      // Jika sudah ada pesan menu, edit pesan itu
       await bot.editMessageText(text, {
         chat_id: chatId,
         message_id: cart.messageId,
@@ -280,7 +354,6 @@ async function showOrderMenu(chatId, messagePrefix = "") {
         ...keyboard,
       });
     } else {
-      // Jika belum ada, kirim pesan baru dan simpan ID-nya
       const sentMessage = await bot.sendMessage(chatId, text, {
         parse_mode: "Markdown",
         ...keyboard,
@@ -288,19 +361,193 @@ async function showOrderMenu(chatId, messagePrefix = "") {
       cart.messageId = sentMessage.message_id;
     }
   } catch (error) {
-    console.error("Error di showOrderMenu:", error.message);
+    console.error("Error di showServiceOrderMenu:", error.message);
     if (
       error.message.includes("message to edit not found") ||
       error.message.includes("message is not modified")
     ) {
-      // Jika messageId tidak valid (misal, terlalu tua), kirim pesan baru
-      // Atau jika pesan tidak dimodifikasi (misal, batal lalu panggil showOrderMenu lagi)
-      // Kita kirim ulang saja agar tidak error
       if (
         cart.messageId &&
         !error.message.includes("message is not modified")
       ) {
-        // Hapus pesan lama jika bisa, agar tidak duplikat
+        try {
+          await bot.deleteMessage(chatId, cart.messageId);
+        } catch (e) {}
+      }
+      const sentMessage = await bot.sendMessage(chatId, text, {
+        parse_mode: "Markdown",
+        ...keyboard,
+      });
+      cart.messageId = sentMessage.message_id;
+    }
+  }
+}
+
+// =============================
+// Bagian Fungsi Order PRODUK
+// =============================
+
+function buildProductsKeyboard(chatId) {
+  const keyboard = [];
+  const cart = productCarts[chatId];
+
+  for (const productName in productsData) {
+    const safeProductName = productName.replace(/ /g, "-");
+    keyboard.push([
+      {
+        text: `🧴 ${productName}`,
+        callback_data: `product_select_${safeProductName}`,
+      },
+    ]);
+  }
+
+  if (cart && cart.items.length > 0) {
+    keyboard.push([
+      {
+        text: "✅ Selesai & Checkout Produk",
+        callback_data: "product_checkout",
+      },
+    ]);
+  }
+
+  keyboard.push([
+    { text: "❌ Batal Order & Kembali", callback_data: "product_cancel" },
+  ]);
+
+  return { reply_markup: { inline_keyboard: keyboard } };
+}
+
+async function showProductQuantitySelector(
+  chatId,
+  productName,
+  currentQuantity,
+  messageId
+) {
+  const product = productsData[productName];
+  if (!product) {
+    console.error("Produk tidak ditemukan:", productName);
+    return;
+  }
+
+  const unit = product.unit;
+  let qty = currentQuantity;
+  const safeProductName = productName.replace(/ /g, "-");
+
+  let text = `🧴 Pilih jumlah untuk *${productName}*:\n\n*Jumlah Saat Ini: ${qty} ${unit}*`;
+  let keyboard = [];
+  let row1 = [];
+  let row2 = [];
+
+  row1.push({
+    text: "+1 pcs",
+    callback_data: `product_qty_update_${safeProductName}_${qty + 1}`,
+  });
+  row1.push({
+    text: "+5 pcs",
+    callback_data: `product_qty_update_${safeProductName}_${qty + 5}`,
+  });
+  if (qty >= 1) {
+    row2.push({
+      text: "-1 pcs",
+      callback_data: `product_qty_update_${safeProductName}_${Math.max(
+        0,
+        qty - 1
+      )}`,
+    });
+  }
+  if (qty >= 5) {
+    row2.push({
+      text: "-5 pcs",
+      callback_data: `product_qty_update_${safeProductName}_${Math.max(
+        0,
+        qty - 5
+      )}`,
+    });
+  }
+
+  keyboard.push(row1);
+  if (row2.length > 0) keyboard.push(row2);
+
+  if (qty > 0) {
+    keyboard.push([
+      {
+        text: `✅ Konfirmasi ${qty} ${unit}`,
+        callback_data: `product_qty_confirm_${safeProductName}_${qty}`,
+      },
+    ]);
+  }
+
+  keyboard.push([
+    { text: "⬅️ Kembali ke Menu Produk", callback_data: "product_cancel_item" },
+  ]);
+
+  const keyboardMarkup = { reply_markup: { inline_keyboard: keyboard } };
+
+  try {
+    await bot.editMessageText(text, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: "Markdown",
+      ...keyboardMarkup,
+    });
+  } catch (e) {
+    if (!e.message.includes("message is not modified")) {
+      console.error("Error di showProductQuantitySelector:", e.message);
+    }
+  }
+}
+
+async function showProductOrderMenu(chatId, messagePrefix = "") {
+  if (!productCarts[chatId]) {
+    productCarts[chatId] = { items: [], messageId: null };
+  }
+  const cart = productCarts[chatId];
+
+  let text = messagePrefix ? `${messagePrefix}\n\n` : "";
+  text += "🛒 *Keranjang Produk Anda Saat Ini:*\n";
+
+  if (cart.items.length === 0) {
+    text += "  _(Kosong)_\n";
+  } else {
+    let total = 0;
+    for (const item of cart.items) {
+      const subtotal = item.price * item.quantity;
+      total += subtotal;
+      text += `  - ${item.name} (${item.quantity} ${
+        item.unit
+      }) = Rp${subtotal.toLocaleString("id-ID")}\n`;
+    }
+    text += `\n*Total Estimasi: Rp${total.toLocaleString("id-ID")}*`;
+  }
+  text += "\n\nSilakan pilih produk untuk ditambahkan ke keranjang:";
+
+  const keyboard = buildProductsKeyboard(chatId);
+
+  try {
+    if (cart.messageId) {
+      await bot.editMessageText(text, {
+        chat_id: chatId,
+        message_id: cart.messageId,
+        parse_mode: "Markdown",
+        ...keyboard,
+      });
+    } else {
+      const sentMessage = await bot.sendMessage(chatId, text, {
+        parse_mode: "Markdown",
+        ...keyboard,
+      });
+      cart.messageId = sentMessage.message_id;
+    }
+  } catch (error) {
+    console.error("Error di showProductOrderMenu:", error.message);
+    if (
+      error.message.includes("message to edit not found") ||
+      error.message.includes("message is not modified")
+    ) {
+      if (
+        cart.messageId &&
+        !error.message.includes("message is not modified")
+      ) {
         try {
           await bot.deleteMessage(chatId, cart.messageId);
         } catch (e) {}
@@ -318,10 +565,13 @@ async function showOrderMenu(chatId, messagePrefix = "") {
 // Teks /start (DIBUAT JADI FUNGSI)
 // =============================
 function sendStartMessage(chatId) {
-  // Bersihkan keranjang belanja jika user /start
-  if (userCarts[chatId]) {
-    delete userCarts[chatId];
+  if (serviceCarts[chatId]) {
+    delete serviceCarts[chatId];
   }
+  if (productCarts[chatId]) {
+    delete productCarts[chatId];
+  }
+
   bot.sendMessage(
     chatId,
     `
@@ -342,17 +592,19 @@ bot.onText(/\/start/, (msg) => {
 });
 
 // =============================
-// HANDLER CALLBACK BUTTON (DIPERBARUI TOTAL)
+// HANDLER CALLBACK BUTTON (DIPERBARUI)
 // =============================
 bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const action = query.data;
-  const messageId = query.message.message_id; // Kita butuh ini untuk mengedit pesan
+  const messageId = query.message.message_id;
 
-  // (UBAH) Cek jika ini adalah tombol pemilihan layanan
+  // ===================================
+  // ALUR ORDER LAYANAN (SERVICES)
+  // ===================================
   if (action.startsWith("order_select_")) {
     const safeServiceName = action.substring("order_select_".length);
-    const serviceName = safeServiceName.replace(/-/g, " "); // 'Cuci-Setrika' -> 'Cuci Setrika'
+    const serviceName = safeServiceName.replace(/-/g, " ");
     const service = jasaLaundry[serviceName];
 
     if (!service) {
@@ -360,82 +612,69 @@ bot.on("callback_query", async (query) => {
       return bot.answerCallbackQuery(query.id);
     }
 
-    // (UBAH) Tidak lagi minta teks, panggil pemilih kuantitas
-    const defaultQty = service.unit === "kg" ? 0.5 : 1;
-    await showQuantitySelector(chatId, serviceName, defaultQty, messageId);
-
+    const defaultQty = 0;
+    await showServiceQuantitySelector(
+      chatId,
+      serviceName,
+      defaultQty,
+      messageId
+    );
     return bot.answerCallbackQuery(query.id);
   }
 
-  // (BARU) Handler untuk tombol update kuantitas (+0.5, -1, dll)
   if (action.startsWith("qty_update_")) {
-    const parts = action.split("_"); // cth: [qty, update, Cuci-Setrika, 1.5]
+    const parts = action.split("_");
     const quantity = parseFloat(parts[parts.length - 1]);
-    const safeServiceName = parts.slice(2, -1).join("_"); // Menangani nama jika ada '_'
+    const safeServiceName = parts.slice(2, -1).join("_");
     const serviceName = safeServiceName.replace(/-/g, " ");
-
     if (isNaN(quantity)) {
       console.error("Error parsing quantity dari callback:", action);
       return bot.answerCallbackQuery(query.id, { text: "Error jumlah!" });
     }
-
-    await showQuantitySelector(chatId, serviceName, quantity, messageId);
+    await showServiceQuantitySelector(chatId, serviceName, quantity, messageId);
     return bot.answerCallbackQuery(query.id);
   }
 
-  // (BARU) Handler untuk tombol konfirmasi kuantitas
   if (action.startsWith("qty_confirm_")) {
     const parts = action.split("_");
     const quantity = parseFloat(parts[parts.length - 1]);
     const safeServiceName = parts.slice(2, -1).join("_");
     const serviceName = safeServiceName.replace(/-/g, " ");
-
     const service = jasaLaundry[serviceName];
 
     if (!service || isNaN(quantity) || quantity <= 0) {
-      await showOrderMenu(chatId, `Jumlah tidak valid.`);
+      await showServiceOrderMenu(chatId, `Jumlah tidak valid.`);
       return bot.answerCallbackQuery(query.id);
     }
-
-    // Pastikan cart ada
-    if (!userCarts[chatId]) {
-      userCarts[chatId] = { items: [], messageId: messageId };
+    if (!serviceCarts[chatId]) {
+      serviceCarts[chatId] = { items: [], messageId: messageId };
     } else {
-      userCarts[chatId].messageId = messageId; // Update messageId
+      serviceCarts[chatId].messageId = messageId;
     }
-
-    // Tambahkan ke keranjang
-    userCarts[chatId].items.push({
+    serviceCarts[chatId].items.push({
       name: serviceName,
       price: service.price,
       unit: service.unit,
       quantity: quantity,
     });
-
-    // Tampilkan menu order lagi dengan pesan sukses
-    await showOrderMenu(
+    await showServiceOrderMenu(
       chatId,
       `✅ ${quantity} ${service.unit} ${serviceName} berhasil ditambahkan!`
     );
     return bot.answerCallbackQuery(query.id);
   }
 
-  // (BARU) Handler untuk tombol batal dari pemilih kuantitas
-  if (action === "qty_cancel") {
-    // Cukup panggil ulang menu order
-    await showOrderMenu(chatId);
+  if (action === "order_cancel_item") {
+    await showServiceOrderMenu(chatId);
     return bot.answerCallbackQuery(query.id);
   }
 
-  // Cek jika ini adalah tombol checkout dari keranjang
   if (action === "order_checkout") {
-    const cart = userCarts[chatId];
-
+    const cart = serviceCarts[chatId];
     if (!cart || cart.items.length === 0) {
-      await bot.sendMessage(chatId, "Keranjang Anda kosong.", mainMenu);
+      await bot.sendMessage(chatId, "Keranjang layanan Anda kosong.", mainMenu);
       return bot.answerCallbackQuery(query.id);
     }
-
     const total = calculateTotal(cart.items);
     const orderDetails = cart.items
       .map((item) => {
@@ -450,7 +689,6 @@ bot.on("callback_query", async (query) => {
       details: orderDetails,
       total: total,
     };
-
     try {
       if (cart.messageId) {
         await bot.deleteMessage(chatId, cart.messageId);
@@ -458,12 +696,12 @@ bot.on("callback_query", async (query) => {
     } catch (e) {
       console.error("Gagal hapus pesan menu:", e.message);
     }
-    delete userCarts[chatId];
+    delete serviceCarts[chatId];
 
     await bot.sendMessage(
       chatId,
       `
-✅ Order Kamu:
+✅ Order Layanan Kamu:
 ${orderDetails}
 
 💰 Total Estimasi: Rp${total.toLocaleString("id-ID")}
@@ -474,31 +712,191 @@ Mau lanjut checkout?
   `,
       { parse_mode: "Markdown", ...checkoutKeyboard }
     );
-
     return bot.answerCallbackQuery(query.id);
   }
 
-  // Cek jika ini adalah tombol batal dari keranjang
   if (action === "order_cancel") {
     try {
-      if (userCarts[chatId]) {
-        if (userCarts[chatId].messageId) {
-          await bot.deleteMessage(chatId, userCarts[chatId].messageId);
+      if (serviceCarts[chatId]) {
+        if (serviceCarts[chatId].messageId) {
+          await bot.deleteMessage(chatId, serviceCarts[chatId].messageId);
         }
-        delete userCarts[chatId];
+        delete serviceCarts[chatId];
       }
-      await bot.sendMessage(chatId, "Order dibatalkan.", mainMenu);
+      await bot.sendMessage(chatId, "Order layanan dibatalkan.", mainMenu);
     } catch (e) {
       console.error("Gagal batalkan order:", e.message);
-      sendStartMessage(chatId); // Fallback
+      sendStartMessage(chatId);
     }
     return bot.answerCallbackQuery(query.id);
   }
 
-  // Handler untuk tombol-tombol lainnya (Menu Utama)
+  // ===================================
+  // ALUR ORDER PRODUK (PRODUCTS)
+  // ===================================
+
+  if (action.startsWith("product_select_")) {
+    const safeProductName = action.substring("product_select_".length);
+    const productName = safeProductName.replace(/-/g, " ");
+    const product = productsData[productName];
+
+    if (!product) {
+      await bot.sendMessage(chatId, "Maaf, produk itu tidak ditemukan.");
+      return bot.answerCallbackQuery(query.id);
+    }
+
+    const defaultQty = 0;
+    await showProductQuantitySelector(
+      chatId,
+      productName,
+      defaultQty,
+      messageId
+    );
+    return bot.answerCallbackQuery(query.id);
+  }
+
+  if (action.startsWith("product_qty_update_")) {
+    const parts = action.split("_");
+    const quantity = parseFloat(parts[parts.length - 1]);
+    const safeProductName = parts.slice(3, -1).join("_");
+    const productName = safeProductName.replace(/-/g, " ");
+    if (isNaN(quantity)) {
+      console.error("Error parsing quantity dari callback:", action);
+      return bot.answerCallbackQuery(query.id, { text: "Error jumlah!" });
+    }
+    await showProductQuantitySelector(chatId, productName, quantity, messageId);
+    return bot.answerCallbackQuery(query.id);
+  }
+
+  if (action.startsWith("product_qty_confirm_")) {
+    const parts = action.split("_");
+    const quantity = parseFloat(parts[parts.length - 1]);
+    const safeProductName = parts.slice(3, -1).join("_");
+    const productName = safeProductName.replace(/-/g, " ");
+    const product = productsData[productName];
+
+    if (!product || isNaN(quantity) || quantity <= 0) {
+      await showProductOrderMenu(chatId, `Jumlah tidak valid.`);
+      return bot.answerCallbackQuery(query.id);
+    }
+    if (!productCarts[chatId]) {
+      productCarts[chatId] = { items: [], messageId: messageId };
+    } else {
+      productCarts[chatId].messageId = messageId;
+    }
+    productCarts[chatId].items.push({
+      name: productName,
+      price: product.price,
+      unit: product.unit,
+      quantity: quantity,
+    });
+    await showProductOrderMenu(
+      chatId,
+      `✅ ${quantity} ${product.unit} ${productName} berhasil ditambahkan!`
+    );
+    return bot.answerCallbackQuery(query.id);
+  }
+
+  if (action === "product_cancel_item") {
+    await showProductOrderMenu(chatId);
+    return bot.answerCallbackQuery(query.id);
+  }
+
+  if (action === "product_checkout") {
+    const cart = productCarts[chatId];
+    if (!cart || cart.items.length === 0) {
+      await bot.sendMessage(chatId, "Keranjang produk Anda kosong.", mainMenu);
+      return bot.answerCallbackQuery(query.id);
+    }
+    const total = calculateTotal(cart.items);
+    const orderDetails = cart.items
+      .map((item) => {
+        const subtotal = item.price * item.quantity;
+        return `  - ${item.name} x${item.quantity}${
+          item.unit
+        } = Rp${subtotal.toLocaleString("id-ID")}`;
+      })
+      .join("\n");
+
+    pendingOrders[chatId] = {
+      details: orderDetails,
+      total: total,
+    };
+    try {
+      if (cart.messageId) {
+        await bot.deleteMessage(chatId, cart.messageId);
+      }
+    } catch (e) {
+      console.error("Gagal hapus pesan menu:", e.message);
+    }
+    delete productCarts[chatId];
+
+    await bot.sendMessage(
+      chatId,
+      `
+✅ Order Produk Kamu:
+${orderDetails}
+
+💰 Total Tagihan: Rp${total.toLocaleString("id-ID")}
+
+*(Produk bisa diambil di kasir atau diantar bersama cucian)*
+
+Mau lanjut checkout?
+  `,
+      { parse_mode: "Markdown", ...checkoutKeyboard }
+    );
+    return bot.answerCallbackQuery(query.id);
+  }
+
+  if (action === "product_cancel") {
+    try {
+      if (productCarts[chatId]) {
+        if (productCarts[chatId].messageId) {
+          await bot.deleteMessage(chatId, productCarts[chatId].messageId);
+        }
+        delete productCarts[chatId];
+      }
+      await bot.sendMessage(chatId, "Order produk dibatalkan.", mainMenu);
+    } catch (e) {
+      console.error("Gagal batalkan order:", e.message);
+      sendStartMessage(chatId);
+    }
+    return bot.answerCallbackQuery(query.id);
+  }
+
+  // ===================================
+  // HANDLER TOMBOL MENU UTAMA
+  // ===================================
   try {
     switch (action) {
-      // === FLOW 2: LIHAT LAYANAN ===
+      // Tombol Navigasi
+      case "nav_services":
+        await bot.sendMessage(
+          chatId,
+          "Anda memilih *Layanan Jasa*. Silakan pilih:",
+          {
+            parse_mode: "Markdown",
+            ...servicesMenu,
+          }
+        );
+        break;
+      case "nav_products":
+        await bot.sendMessage(
+          chatId,
+          "Anda memilih *Beli Produk*. Silakan pilih:",
+          {
+            parse_mode: "Markdown",
+            ...productsMenu,
+          }
+        );
+        break;
+
+      // === FLOW: KEMBALI KE MENU UTAMA ===
+      case "menu_utama":
+        sendStartMessage(chatId);
+        break;
+
+      // === FLOW LAYANAN ===
       case "lihat_layanan":
         let layananText = "👔 Daftar Layanan Kami:\n\n";
         for (const [namaJasa, detail] of Object.entries(jasaLaundry)) {
@@ -506,23 +904,41 @@ Mau lanjut checkout?
           layananText += `👕 ${namaJasa} – Rp${hargaString} /${detail.unit}\n`;
         }
         layananText += `\nSilakan tekan "Order Sekarang" untuk mulai order.`;
-
         await bot.sendMessage(chatId, layananText, {
           parse_mode: "Markdown",
-          ...menuKeyboard,
+          ...servicesMenu,
         });
         break;
-
-      // === FLOW 3: ORDER LAUNDRY (UBAH) ===
       case "order_laundry":
-        // Panggil fungsi menu
-        await showOrderMenu(chatId, "Selamat datang di menu order!");
+        await showServiceOrderMenu(
+          chatId,
+          "Selamat datang di menu order layanan!"
+        );
         break;
 
-      // === FLOW: KEMBALI KE MENU UTAMA ===
-      case "menu_utama":
-        sendStartMessage(chatId);
+      // FLOW PRODUK
+      case "lihat_produk":
+        let produkText = "🧴 Daftar Produk Kami:\n\n";
+        for (const [namaProduk, detail] of Object.entries(productsData)) {
+          const hargaString = detail.price.toLocaleString("id-ID");
+          produkText += `👕 ${namaProduk} – Rp${hargaString} /${detail.unit}\n`;
+        }
+        produkText += `\nSilakan tekan "Order Produk" untuk mulai order.`;
+        await bot.sendMessage(chatId, produkText, {
+          parse_mode: "Markdown",
+          ...productsMenu,
+        });
         break;
+      case "order_produk":
+        await showProductOrderMenu(
+          chatId,
+          "Selamat datang di menu order produk!"
+        );
+        break;
+
+      // ===================================
+      // ALUR CHECKOUT (Generik)
+      // ===================================
 
       // === FLOW 3.2: KONFIRMASI CHECKOUT (YA) ===
       case "checkout_confirm":
@@ -534,38 +950,7 @@ Mau lanjut checkout?
           );
           break;
         }
-        delete pendingOrders[chatId];
-
-        try {
-          await bot.sendMessage(
-            chatId,
-            "Silakan kirim *Nama*, *Nomor HP*, dan *Alamat Jemput*.",
-            { parse_mode: "Markdown" }
-          );
-
-          bot.once("text", async (contact) => {
-            if (contact.text === "/start") {
-              sendStartMessage(chatId);
-              return;
-            }
-            try {
-              await bot.sendMessage(
-                chatId,
-                `
-Terima kasih ${contact.text.split(" ")[0]}! 🙏  
-Admin kami akan segera menghubungi kamu untuk konfirmasi order dan jadwal jemput.
-
-🧺 Terima kasih sudah order di Gabe Laundry! 💚
-        `,
-                { parse_mode: "Markdown", ...mainMenu }
-              );
-            } catch (err) {
-              console.error("Error di listener 'contact':", err);
-            }
-          });
-        } catch (err) {
-          console.error("Error di 'checkout_confirm':", err);
-        }
+        await askForContactInfo(chatId);
         break;
 
       // === FLOW 3.3: BATALKAN CHECKOUT (TIDAK) ===
@@ -579,7 +964,6 @@ Admin kami akan segera menghubungi kamu untuk konfirmasi order dan jadwal jemput
           break;
         }
         delete pendingOrders[chatId];
-
         try {
           await bot.sendMessage(
             chatId,
@@ -590,6 +974,115 @@ Admin kami akan segera menghubungi kamu untuk konfirmasi order dan jadwal jemput
           console.error("Error di 'checkout_cancel':", err);
         }
         break;
+
+      // === FLOW 3.4: KONFIRMASI DATA KONTAK (BENAR) ===
+      // (UBAH) Menambahkan detail pesanan
+      case "contact_confirm_yes":
+        if (!pendingOrders[chatId] || !pendingOrders[chatId].contactText) {
+          await bot.sendMessage(
+            chatId,
+            "Maaf, order ini sudah kedaluwarsa.",
+            mainMenu
+          );
+          break;
+        }
+        try {
+          // (UBAH) Ambil semua data dari pendingOrders
+          const orderData = pendingOrders[chatId];
+          const contactText = orderData.contactText;
+          const orderDetails = orderData.details;
+          const total = orderData.total;
+
+          if (!orderDetails || !total) {
+            await bot.sendMessage(
+              chatId,
+              "Maaf, data order tidak lengkap. Coba lagi.",
+              mainMenu
+            );
+            delete pendingOrders[chatId];
+            break;
+          }
+
+          const lines = contactText.split("\n");
+          const nama = lines[0] || "[Belum diisi]";
+          const hp = lines[1] || "[Belum diisi]";
+          const alamat = lines.slice(2).join("\n") || "[Belum diisi]";
+
+          // ===========================================
+          // (UBAH) PESAN KONFIRMASI DENGAN DETAIL PESANAN
+          // ===========================================
+          await bot.sendMessage(
+            chatId,
+            `
+Terima kasih ${nama.split(" ")[0]}! 🙏  
+
+Pesanan Anda telah kami catat. Admin kami akan segera menghubungi kamu.
+
+Berikut adalah *ringkasan pesanan* Anda:
+\`\`\`
+${orderDetails}
+\`\`\`
+*Total Tagihan: Rp${total.toLocaleString("id-ID")}*
+
+---
+Dan ini adalah *detail kontak* Anda:
+
+*Nama:*
+\`\`\`
+${nama}
+\`\`\`
+*Nomor HP:*
+\`\`\`
+${hp}
+\`\`\`
+*Alamat Jemput/Pengambilan:*
+\`\`\`
+${alamat}
+\`\`\`
+
+---
+*Jika ada kendala atau pertanyaan terkait order ini, silakan hubungi admin:*
+📞 0811-1222-3333
+📧 admin@gabelaundry.com
+
+🧺 Terima kasih sudah order di Gabe Laundry! 💚
+        `,
+            { parse_mode: "Markdown" }
+          );
+          // ===========================================
+          // AKHIR DARI BAGIAN YANG DIMODIFIKASI
+          // ===========================================
+
+          delete pendingOrders[chatId];
+          sendStartMessage(chatId);
+        } catch (err) {
+          console.error("Error di 'contact_confirm_yes':", err);
+        }
+        break;
+
+      // === FLOW 3.5: KONFIRMASI DATA KONTAK (ULANGI) ===
+      case "contact_confirm_no":
+        if (!pendingOrders[chatId]) {
+          await bot.sendMessage(
+            chatId,
+            "Maaf, order ini sudah kedaluwarsa.",
+            mainMenu
+          );
+          break;
+        }
+        if (pendingOrders[chatId].contactText) {
+          delete pendingOrders[chatId].contactText;
+        }
+        await bot.sendMessage(
+          chatId,
+          "Baik, silakan masukkan kembali data Anda dengan benar."
+        );
+        await askForContactInfo(chatId);
+        break;
+
+      // ===================================
+      // ALUR INFO
+      // ===================================
 
       // === FLOW 4: INFO LOKASI ===
       case "info_lokasi":
@@ -649,8 +1142,7 @@ function calculateTotal(items) {
 // FLOW 6: FALLBACK
 // =============================
 function fallback(chatId) {
-  if (userCarts[chatId]) {
-    // Jika user ada di alur order, jangan kirim fallback
+  if (serviceCarts[chatId] || productCarts[chatId]) {
     return;
   }
   bot.sendMessage(
@@ -663,7 +1155,7 @@ Silakan pilih menu berikut:
   );
 }
 
-// (BARU) Global Text Handler untuk fallback
+// Global Text Handler untuk fallback
 bot.on("text", (msg) => {
   if (msg.text.startsWith("/start")) {
     return;
@@ -679,7 +1171,7 @@ bot.on("text", (msg) => {
   }
 
   if (!hasOnceListener) {
-    fallback(msg.chat.id);
+    fallback(msg.chatId);
   }
 });
 
