@@ -9,6 +9,8 @@ const TelegramBot = require("node-telegram-bot-api");
 
 // === TOKEN DIAMBIL DARI .env ===
 const token = process.env.TELEGRAM_TOKEN;
+// (BARU) Ambil ID Admin dari .env
+const adminChatId = process.env.ADMIN_CHAT_ID;
 
 if (!token) {
   console.error("Error: Token Telegram tidak ditemukan!");
@@ -16,6 +18,12 @@ if (!token) {
     "Pastikan Anda sudah membuat file .env dan mengisinya dengan TELEGRAM_TOKEN=..."
   );
   process.exit(1);
+}
+// (BARU) Validasi ID Admin
+if (!adminChatId) {
+  console.warn(
+    "PERINGATAN: ADMIN_CHAT_ID tidak ditemukan di .env. Notifikasi admin tidak akan berfungsi."
+  );
 }
 
 const bot = new TelegramBot(token, { polling: true });
@@ -115,6 +123,12 @@ const paymentMethodMenu = {
       [{ text: "💳 M-Banking", callback_data: "payment_mbanking" }],
       [{ text: "📱 E-Wallet", callback_data: "payment_ewallet" }],
       [{ text: "💵 Bayar di Tempat (COD)", callback_data: "payment_cod" }],
+      [
+        {
+          text: "« Kembali ke Data Kontak",
+          callback_data: "payment_back_to_contact",
+        },
+      ], // (BARU)
     ],
   },
 };
@@ -146,17 +160,25 @@ const ewalletMenu = {
 // Data Layanan & Produk
 // =============================
 const jasaLaundry = {
-  "Cuci Setrika": { price: 7000, unit: "kg" },
-  "Cuci Kering": { price: 5000, unit: "kg" },
-  "Setrika Saja": { price: 4000, unit: "kg" },
-  Sepatu: { price: 25000, unit: "pcs" },
-  "Boneka Besar": { price: 20000, unit: "pcs" },
+  "Cuci Komplit": { price: 11000, unit: "kg" },
+  "Flash Laundry (Express)": { price: 25000, unit: "kg" },
+  "Cuci Kering Lipat": { price: 9000, unit: "kg" },
+  "One Day Service": { price: 16000, unit: "kg" },
+  Setrika: { price: 8000, unit: "kg" },
+  "Pakaian Formal/Khusus": { price: 65000, unit: "pcs" },
+  "Pakaian Musiman/Tebal": { price: 45000, unit: "pcs" },
+  "Pakaian Kerja": { price: 35000, unit: "pcs" },
+  "Pakaian/Kain Berbahan Sensitif/Khusus": { price: 50000, unit: "pcs" },
+  "Pakaian Bayi": { price: 15000, unit: "pcs" },
+  "Handuk/Sprei": { price: 20000, unit: "pcs" },
+  "Tas/Sepatu/Boneka": { price: 35000, unit: "pcs" },
 };
 
 const productsData = {
-  "Pewangi Mawar 1L": { price: 15000, unit: "pcs" },
+  "Deterjen Bubuk 650Gr": { price: 25000, unit: "pcs" },
   "Deterjen Cair 1L": { price: 20000, unit: "pcs" },
   "Pelembut Pakaian 1L": { price: 18000, unit: "pcs" },
+  "Pewangi Pakaian (Mawar/Melati/Sakura) 1L": { price: 50000, unit: "pcs" },
 };
 
 // =============================
@@ -200,13 +222,14 @@ const productsMenu = {
 };
 
 // =============================
-// Fungsi untuk meminta data kontak
+// (UBAH) Fungsi untuk meminta data kontak (dengan validasi)
 // =============================
 async function askForContactInfo(chatId) {
   try {
     const orderData = pendingOrders[chatId];
     let totalText = "";
-    if (orderData && orderData.total) {
+    if (orderData && typeof orderData.total !== "undefined") {
+      // Cek total ada
       totalText = `\n*Total Tagihan Anda (termasuk ongkir): Rp${orderData.total.toLocaleString(
         "id-ID"
       )}*`;
@@ -219,7 +242,7 @@ ${totalText}
 
 Silakan kirim *Nama*, *Nomor HP*, dan *Alamat Jemput* dalam 1 baris.
 
-*Gunakan tanda titik-koma (;) sebagai pemisah.*
+*Gunakan tanda titik-koma (;) sebagai pemisah.* Pastikan ada *3 bagian* terpisah.
 
 Contoh:
 Joni; 08123456789; Jl. Mawar No. 1, Serpong
@@ -242,13 +265,45 @@ Joni; 08123456789; Jl. Mawar No. 1, Serpong
         return;
       }
 
-      pendingOrders[chatId].contactText = contact.text;
-
+      // (BARU) Validasi Input
       const parts = contact.text.split(";");
-      const nama = parts[0] ? parts[0].trim() : "[Belum diisi]";
-      const hp = parts[1] ? parts[1].trim() : "[Belum diisi]";
-      const alamat = parts[2] ? parts[2].trim() : "[Belum diisi]";
+      if (parts.length !== 3) {
+        await bot.sendMessage(
+          chatId,
+          "Format salah. Pastikan Anda memasukkan Nama; Nomor HP; Alamat (3 bagian dipisah titik-koma). Silakan coba lagi."
+        );
+        askForContactInfo(chatId); // Minta ulang
+        return;
+      }
 
+      const nama = parts[0] ? parts[0].trim() : "";
+      const hp = parts[1] ? parts[1].trim() : "";
+      const alamat = parts[2] ? parts[2].trim() : "";
+
+      // Validasi sederhana: Nama dan Alamat tidak boleh kosong
+      if (!nama || !alamat) {
+        await bot.sendMessage(
+          chatId,
+          "Nama dan Alamat tidak boleh kosong. Silakan coba lagi."
+        );
+        askForContactInfo(chatId); // Minta ulang
+        return;
+      }
+      // Validasi nomor HP (minimal 7 digit angka, boleh ada + di depan)
+      if (!/^\+?\d{7,}$/.test(hp.replace(/\s|-/g, ""))) {
+        // Hapus spasi/strip sebelum tes
+        await bot.sendMessage(
+          chatId,
+          "Nomor HP tidak valid (minimal 7 digit angka). Silakan coba lagi."
+        );
+        askForContactInfo(chatId); // Minta ulang
+        return;
+      }
+
+      // Simpan jika valid
+      pendingOrders[chatId].contactText = contact.text; // Simpan teks asli
+
+      // Tampilkan konfirmasi
       await bot.sendMessage(
         chatId,
         `
@@ -283,14 +338,32 @@ Apakah data di atas sudah benar?
 }
 
 // =============================
-// Bagian Fungsi Order LAYANAN JASA
+// Bagian Fungsi Order LAYANAN JASA (Dengan Hapus Item)
 // =============================
 
-// (Kode fungsi buildServicesKeyboard, showServiceQuantitySelector, showServiceOrderMenu tidak berubah)
+// (UBAH) Menambah tombol hapus di keyboard
 function buildServicesKeyboard(chatId) {
   const keyboard = [];
   const serviceCart = serviceCarts[chatId];
   const productCart = productCarts[chatId];
+
+  // (BARU) Tampilkan item di keranjang dengan tombol hapus
+  if (serviceCart && serviceCart.items.length > 0) {
+    keyboard.push([
+      { text: "--- Keranjang Layanan ---", callback_data: "ignore" },
+    ]); // Separator
+    serviceCart.items.forEach((item, index) => {
+      keyboard.push([
+        {
+          text: `❌ Hapus ${item.name} (${item.quantity}${item.unit})`,
+          callback_data: `cart_remove_service_${index}`,
+        },
+      ]);
+    });
+    keyboard.push([
+      { text: "--- Pilih Layanan Baru ---", callback_data: "ignore" },
+    ]); // Separator
+  }
 
   for (const serviceName in jasaLaundry) {
     const safeServiceName = serviceName.replace(/ /g, "-");
@@ -328,6 +401,7 @@ function buildServicesKeyboard(chatId) {
   return { reply_markup: { inline_keyboard: keyboard } };
 }
 
+// (Kode fungsi showServiceQuantitySelector tidak berubah)
 async function showServiceQuantitySelector(
   chatId,
   serviceName,
@@ -432,6 +506,7 @@ async function showServiceQuantitySelector(
   }
 }
 
+// (UBAH) Tampilkan keranjang dengan lebih detail
 async function showServiceOrderMenu(chatId, messagePrefix = "") {
   if (!serviceCarts[chatId]) {
     serviceCarts[chatId] = { items: [], messageId: null };
@@ -444,19 +519,20 @@ async function showServiceOrderMenu(chatId, messagePrefix = "") {
   const productCart = productCarts[chatId];
 
   let text = messagePrefix ? `${messagePrefix}\n\n` : "";
-  text += "🛒 *Keranjang Layanan Anda:*\n";
+  text += "🛒 *Keranjang Layanan Anda Saat Ini:*\n";
 
   let serviceTotal = 0;
   if (serviceCart.items.length === 0) {
     text += "  _(Kosong)_\n";
   } else {
-    for (const item of serviceCart.items) {
+    serviceCart.items.forEach((item, index) => {
+      // (UBAH) Gunakan forEach untuk index
       const subtotal = item.price * item.quantity;
       serviceTotal += subtotal;
-      text += `  - ${item.name} (${item.quantity} ${
+      text += `  ${index + 1}. ${item.name} (${item.quantity}${
         item.unit
       }) = Rp${subtotal.toLocaleString("id-ID")}\n`;
-    }
+    });
   }
 
   const productTotal = productCart ? calculateTotal(productCart.items) : 0;
@@ -470,9 +546,9 @@ async function showServiceOrderMenu(chatId, messagePrefix = "") {
     "id-ID"
   )}*`;
 
-  text += "\n\nSilakan pilih layanan untuk ditambahkan:";
+  text += "\n\nSilakan pilih layanan untuk ditambahkan/dihapus:"; // (UBAH)
 
-  const keyboard = buildServicesKeyboard(chatId);
+  const keyboard = buildServicesKeyboard(chatId); // Keyboard sudah diubah
   const messageIdToUse = serviceCart.messageId || productCart.messageId;
 
   try {
@@ -495,29 +571,70 @@ async function showServiceOrderMenu(chatId, messagePrefix = "") {
     }
   } catch (error) {
     console.error("Error di showServiceOrderMenu:", error.message);
+    // Fallback jika error (kirim pesan baru)
     if (
-      error.message.includes("message to edit not found") ||
+      error.code === "ETELEGRAM" &&
       error.message.includes("message is not modified")
     ) {
+      // Abaikan error ini jika pesan tidak berubah
+    } else if (
+      error.code === "ETELEGRAM" &&
+      error.message.includes("message to edit not found")
+    ) {
+      console.log("Pesan lama tidak ditemukan, mengirim pesan baru.");
       const sentMessage = await bot.sendMessage(chatId, text, {
         parse_mode: "Markdown",
         ...keyboard,
       });
-      serviceCart.messageId = sentMessage.message_id;
-      productCart.messageId = sentMessage.message_id;
+      if (serviceCarts[chatId])
+        serviceCarts[chatId].messageId = sentMessage.message_id;
+      if (productCarts[chatId])
+        productCarts[chatId].messageId = sentMessage.message_id;
+    } else {
+      // Error lain, coba kirim pesan baru sebagai fallback
+      try {
+        const sentMessage = await bot.sendMessage(chatId, text, {
+          parse_mode: "Markdown",
+          ...keyboard,
+        });
+        if (serviceCarts[chatId])
+          serviceCarts[chatId].messageId = sentMessage.message_id;
+        if (productCarts[chatId])
+          productCarts[chatId].messageId = sentMessage.message_id;
+      } catch (fallbackError) {
+        console.error("Error saat mengirim pesan fallback:", fallbackError);
+      }
     }
   }
 }
 
 // =============================
-// Bagian Fungsi Order PRODUK
+// (UBAH) Bagian Fungsi Order PRODUK (Dengan Hapus Item)
 // =============================
 
-// (Kode fungsi buildProductsKeyboard, showProductQuantitySelector, showProductOrderMenu tidak berubah)
+// (UBAH) Menambah tombol hapus di keyboard
 function buildProductsKeyboard(chatId) {
   const keyboard = [];
   const serviceCart = serviceCarts[chatId];
   const productCart = productCarts[chatId];
+
+  // (BARU) Tampilkan item di keranjang dengan tombol hapus
+  if (productCart && productCart.items.length > 0) {
+    keyboard.push([
+      { text: "--- Keranjang Produk ---", callback_data: "ignore" },
+    ]); // Separator
+    productCart.items.forEach((item, index) => {
+      keyboard.push([
+        {
+          text: `❌ Hapus ${item.name} (${item.quantity}${item.unit})`,
+          callback_data: `cart_remove_product_${index}`,
+        },
+      ]);
+    });
+    keyboard.push([
+      { text: "--- Pilih Produk Baru ---", callback_data: "ignore" },
+    ]); // Separator
+  }
 
   for (const productName in productsData) {
     const safeProductName = productName.replace(/ /g, "-");
@@ -558,6 +675,7 @@ function buildProductsKeyboard(chatId) {
   return { reply_markup: { inline_keyboard: keyboard } };
 }
 
+// (Kode fungsi showProductQuantitySelector tidak berubah)
 async function showProductQuantitySelector(
   chatId,
   productName,
@@ -641,6 +759,7 @@ async function showProductQuantitySelector(
   }
 }
 
+// (UBAH) Tampilkan keranjang dengan lebih detail
 async function showProductOrderMenu(chatId, messagePrefix = "") {
   if (!serviceCarts[chatId]) {
     serviceCarts[chatId] = { items: [], messageId: null };
@@ -653,19 +772,20 @@ async function showProductOrderMenu(chatId, messagePrefix = "") {
   const productCart = productCarts[chatId];
 
   let text = messagePrefix ? `${messagePrefix}\n\n` : "";
-  text += "🛒 *Keranjang Produk Anda:*\n";
+  text += "🛒 *Keranjang Produk Anda Saat Ini:*\n";
 
   let productTotal = 0;
   if (productCart.items.length === 0) {
     text += "  _(Kosong)_\n";
   } else {
-    for (const item of productCart.items) {
+    productCart.items.forEach((item, index) => {
+      // (UBAH)
       const subtotal = item.price * item.quantity;
       productTotal += subtotal;
-      text += `  - ${item.name} (${item.quantity} ${
+      text += `  ${index + 1}. ${item.name} (${item.quantity}${
         item.unit
       }) = Rp${subtotal.toLocaleString("id-ID")}\n`;
-    }
+    });
   }
 
   const serviceTotal = serviceCart ? calculateTotal(serviceCart.items) : 0;
@@ -679,9 +799,9 @@ async function showProductOrderMenu(chatId, messagePrefix = "") {
     "id-ID"
   )}*`;
 
-  text += "\n\nSilakan pilih produk untuk ditambahkan:";
+  text += "\n\nSilakan pilih produk untuk ditambahkan/dihapus:"; // (UBAH)
 
-  const keyboard = buildProductsKeyboard(chatId);
+  const keyboard = buildProductsKeyboard(chatId); // Keyboard sudah diubah
   const messageIdToUse = productCart.messageId || serviceCart.messageId;
 
   try {
@@ -704,16 +824,39 @@ async function showProductOrderMenu(chatId, messagePrefix = "") {
     }
   } catch (error) {
     console.error("Error di showProductOrderMenu:", error.message);
+    // Fallback jika error (kirim pesan baru)
     if (
-      error.message.includes("message to edit not found") ||
+      error.code === "ETELEGRAM" &&
       error.message.includes("message is not modified")
     ) {
+      // Abaikan error ini jika pesan tidak berubah
+    } else if (
+      error.code === "ETELEGRAM" &&
+      error.message.includes("message to edit not found")
+    ) {
+      console.log("Pesan lama tidak ditemukan, mengirim pesan baru.");
       const sentMessage = await bot.sendMessage(chatId, text, {
         parse_mode: "Markdown",
         ...keyboard,
       });
-      serviceCart.messageId = sentMessage.message_id;
-      productCart.messageId = sentMessage.message_id;
+      if (serviceCarts[chatId])
+        serviceCarts[chatId].messageId = sentMessage.message_id;
+      if (productCarts[chatId])
+        productCarts[chatId].messageId = sentMessage.message_id;
+    } else {
+      // Error lain, coba kirim pesan baru sebagai fallback
+      try {
+        const sentMessage = await bot.sendMessage(chatId, text, {
+          parse_mode: "Markdown",
+          ...keyboard,
+        });
+        if (serviceCarts[chatId])
+          serviceCarts[chatId].messageId = sentMessage.message_id;
+        if (productCarts[chatId])
+          productCarts[chatId].messageId = sentMessage.message_id;
+      } catch (fallbackError) {
+        console.error("Error saat mengirim pesan fallback:", fallbackError);
+      }
     }
   }
 }
@@ -749,12 +892,12 @@ bot.onText(/\/start/, (msg) => {
 });
 
 // =============================
-// Fungsi Konfirmasi Akhir (Gabungan)
+// (UBAH) Fungsi Konfirmasi Akhir (Gabungan, Notif Admin)
 // =============================
 async function sendFinalConfirmationAndReset(chatId, paymentInfoText) {
   try {
     const orderData = pendingOrders[chatId];
-    // console.log(`[sendFinalConfirmationAndReset] chatId: ${chatId}, Received orderData:`, JSON.stringify(orderData, null, 2)); // Dihapus setelah debug
+    // console.log(`[sendFinalConfirmationAndReset] chatId: ${chatId}, Received orderData:`, JSON.stringify(orderData, null, 2));
 
     if (
       !orderData ||
@@ -775,21 +918,45 @@ async function sendFinalConfirmationAndReset(chatId, paymentInfoText) {
       return;
     }
 
-    // (UBAH) Gunakan alias 'details: orderDetails' untuk memperbaiki typo
     const {
       contactText,
       details: orderDetails,
       total,
       deliveryFee,
+      deliveryMethod, // Ambil metode pengiriman
     } = orderData;
     const originalTotal = total - (deliveryFee || 0);
 
-    // console.log(`[sendFinalConfirmationAndReset] chatId: ${chatId}, Final orderDetails value before message:`, orderDetails); // Dihapus setelah debug
+    // console.log(`[sendFinalConfirmationAndReset] chatId: ${chatId}, Final orderDetails value before message:`, orderDetails);
 
     const parts = contactText.split(";");
     const nama = parts[0] ? parts[0].trim() : "[Belum diisi]";
     const hp = parts[1] ? parts[1].trim() : "[Belum diisi]";
     const alamat = parts[2] ? parts[2].trim() : "[Belum diisi]";
+
+    // (BARU) Format Pesan Admin
+    const adminMessage = `
+🔔 *Pesanan Baru Diterima!* 🔔
+
+*Pelanggan:*
+Nama: \`${nama}\`
+HP: \`${hp}\`
+Alamat: \`${alamat}\`
+
+*Pesanan:*
+\`\`\`
+${orderDetails}
+\`\`\`
+Subtotal: Rp${originalTotal.toLocaleString("id-ID")}
+Ongkir (${deliveryMethod || "Ambil Sendiri"}): Rp${(
+      deliveryFee || 0
+    ).toLocaleString("id-ID")}
+*Total: Rp${total.toLocaleString("id-ID")}*
+
+*Pembayaran:* \`${paymentInfoText}\` ${
+      orderData.waitingForProof ? "(Menunggu Verifikasi Bukti)" : ""
+    }
+`;
 
     let finalText = `
 Terima kasih ${nama.split(" ")[0]}! 🙏  
@@ -846,7 +1013,19 @@ ${paymentInfoText}
 🧺 Terima kasih sudah order di Gabe Laundry! 💚
 `;
 
+    // Kirim konfirmasi ke user
     await bot.sendMessage(chatId, finalText, { parse_mode: "Markdown" });
+
+    // (BARU) Kirim notifikasi ke admin jika ID ada
+    if (adminChatId) {
+      try {
+        await bot.sendMessage(adminChatId, adminMessage, {
+          parse_mode: "Markdown",
+        });
+      } catch (adminError) {
+        console.error("Gagal mengirim notifikasi ke admin:", adminError);
+      }
+    }
   } catch (error) {
     console.error("Error di sendFinalConfirmationAndReset:", error);
     await bot.sendMessage(
@@ -868,6 +1047,41 @@ bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const action = query.data;
   const messageId = query.message.message_id;
+
+  // (BARU) Handler untuk tombol Hapus Item
+  if (action.startsWith("cart_remove_")) {
+    const parts = action.split("_");
+    const type = parts[2]; // 'service' or 'product'
+    const indexToRemove = parseInt(parts[3]);
+
+    let cart;
+    let updateFunction;
+    let itemRemovedName = "Item";
+
+    if (type === "service" && serviceCarts[chatId]) {
+      cart = serviceCarts[chatId];
+      updateFunction = showServiceOrderMenu;
+    } else if (type === "product" && productCarts[chatId]) {
+      cart = productCarts[chatId];
+      updateFunction = showProductOrderMenu;
+    }
+
+    if (cart && cart.items && cart.items[indexToRemove]) {
+      itemRemovedName = cart.items[indexToRemove].name;
+      cart.items.splice(indexToRemove, 1); // Hapus item dari array
+      await updateFunction(
+        chatId,
+        `🗑️ ${itemRemovedName} dihapus dari keranjang.`
+      );
+    } else {
+      await bot.answerCallbackQuery(query.id, {
+        text: "Gagal menghapus item.",
+      });
+      // Tampilkan ulang menu jika gagal
+      if (updateFunction) await updateFunction(chatId);
+    }
+    return bot.answerCallbackQuery(query.id);
+  }
 
   // ===================================
   // ALUR ORDER LAYANAN (SERVICES)
@@ -1088,9 +1302,6 @@ bot.on("callback_query", async (query) => {
         })
         .join("\n");
     }
-
-    // console.log(`[cart_checkout] chatId: ${chatId}, Calculated orderDetails:`, orderDetails); // Dihapus setelah debug
-    // console.log(`[cart_checkout] chatId: ${chatId}, Calculated total (before delivery):`, total); // Dihapus setelah debug
 
     pendingOrders[chatId] = {
       details: orderDetails,
@@ -1399,6 +1610,23 @@ Setelah selesai, silakan *kirim foto bukti transfer* Anda di sini.`,
         });
         break;
 
+      case "payment_back_to_contact":
+        if (!pendingOrders[chatId]) {
+          await bot.sendMessage(
+            chatId,
+            "Maaf, order ini sudah kedaluwarsa.",
+            mainMenu
+          );
+          break;
+        }
+        // Panggil ulang askForContactInfo untuk menampilkan ulang data + tombol konfirmasi
+        // Hapus pesan menu pembayaran dulu
+        try {
+          await bot.deleteMessage(chatId, messageId);
+        } catch (e) {}
+        await askForContactInfo(chatId);
+        break;
+
       case "payment_cod":
         await sendFinalConfirmationAndReset(chatId, paymentDetails.cod);
         break;
@@ -1450,8 +1678,11 @@ Kami siap membantu Anda! 🧺
         break;
 
       default:
-        if (chatId) {
-          fallback(chatId);
+        // Abaikan tombol separator
+        if (action !== "ignore") {
+          if (chatId) {
+            fallback(chatId);
+          }
         }
     }
   } catch (error) {
@@ -1508,6 +1739,19 @@ bot.on("photo", async (msg) => {
       "✅ Bukti transfer diterima! Pesanan Anda sedang kami proses."
     );
 
+    // Kirim bukti foto ke admin jika ID ada
+    if (adminChatId) {
+      try {
+        await bot.forwardMessage(adminChatId, chatId, msg.message_id);
+        await bot.sendMessage(
+          adminChatId,
+          `Bukti transfer diterima dari chat ID: ${chatId}. Mohon verifikasi pesanan di atas.`
+        );
+      } catch (e) {
+        console.error("Gagal forward bukti transfer:", e);
+      }
+    }
+
     await sendFinalConfirmationAndReset(chatId, paymentInfoText);
   } else {
     await bot.sendMessage(
@@ -1536,7 +1780,11 @@ bot.on("text", (msg) => {
   const listeners = bot.listeners("text");
   let hasOnceListener = false;
   for (const listener of listeners) {
-    if (listener.toString().includes("onceWrapper")) {
+    // Cek apakah listener ini adalah bot.once()
+    if (
+      listener.toString().includes("onceWrapper") ||
+      (listener.name && listener.name.includes("onceWrapper"))
+    ) {
       hasOnceListener = true;
       break;
     }

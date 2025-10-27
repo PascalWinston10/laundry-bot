@@ -1,0 +1,22 @@
+ JASA
+ 
+ "Cuci Komplit": { price: 11000, unit: "kg" },
+  "Flash Laundry (Express)": { price: 25000, unit: "kg" },
+  "Cuci Kering Lipat": { price: 9000, unit: "kg" },
+  "One Day Service": { price: 16000, unit: "kg" },
+  Setrika: { price: 8000, unit: "kg" },
+  "Pakaian Formal/Khusus": { price: 65000, unit: "pcs" },
+  "Pakaian Musiman/Tebal": { price: 45000, unit: "pcs" },
+  "Pakaian Kerja": { price: 35000, unit: "pcs" },
+  "Pakaian/Kain Berbahan Sensitif/Khusus": { price: 50000, unit: "pcs" },
+  "Pakaian Bayi": { price: 15000, unit: "pcs" },
+  "Handuk/Sprei": { price: 20000, unit: "pcs" },
+  "Tas/Sepatu/Boneka": { price: 35000, unit: "pcs" },
+
+
+PRODUK 
+
+"Deterjen Bubuk 650Gr": { price: 25000, unit: "pcs" },
+  "Deterjen Cair 1L": { price: 20000, unit: "pcs" },
+  "Pelembut Pakaian 1L": { price: 18000, unit: "pcs" },
+  "Pewangi Pakaian (Mawar/Melati/Sakura) 1L": { price: 50000, unit: "pcs" },
