@@ -169,7 +169,7 @@ const jasaLaundry = {
   "Pakaian Kerja": { price: 35000, unit: "pcs" },
   "Pakaian/Kain Berbahan Sensitif/Khusus": { price: 50000, unit: "pcs" },
   "Pakaian Bayi": { price: 15000, unit: "pcs" },
-  "Handuk/Sprei": { price: 20000, unit: "pcs" },
+  "Handuk/Sprei": { price: 25000, unit: "pcs" },
   "Tas/Sepatu/Boneka": { price: 35000, unit: "pcs" },
 };
 
