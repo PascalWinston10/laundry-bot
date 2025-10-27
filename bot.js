@@ -9,7 +9,7 @@ const TelegramBot = require("node-telegram-bot-api");
 
 // === TOKEN DIAMBIL DARI .env ===
 const token = process.env.TELEGRAM_TOKEN;
-// (BARU) Ambil ID Admin dari .env
+// Ambil ID Admin dari .env
 const adminChatId = process.env.ADMIN_CHAT_ID;
 
 if (!token) {
@@ -19,7 +19,6 @@ if (!token) {
   );
   process.exit(1);
 }
-// (BARU) Validasi ID Admin
 if (!adminChatId) {
   console.warn(
     "PERINGATAN: ADMIN_CHAT_ID tidak ditemukan di .env. Notifikasi admin tidak akan berfungsi."
@@ -33,6 +32,7 @@ let serviceCarts = {}; // Untuk jasa laundry
 let productCarts = {}; // Untuk produk
 
 // Objek untuk menyimpan order yang menunggu konfirmasi checkout
+// (BARU) Tambah properti: status, adminMessageId
 let pendingOrders = {};
 
 // Keyboard untuk konfirmasi checkout
@@ -128,7 +128,7 @@ const paymentMethodMenu = {
           text: "« Kembali ke Data Kontak",
           callback_data: "payment_back_to_contact",
         },
-      ], // (BARU)
+      ],
     ],
   },
 };
@@ -222,14 +222,13 @@ const productsMenu = {
 };
 
 // =============================
-// (UBAH) Fungsi untuk meminta data kontak (dengan validasi)
+// Fungsi untuk meminta data kontak (dengan validasi)
 // =============================
 async function askForContactInfo(chatId) {
   try {
     const orderData = pendingOrders[chatId];
     let totalText = "";
     if (orderData && typeof orderData.total !== "undefined") {
-      // Cek total ada
       totalText = `\n*Total Tagihan Anda (termasuk ongkir): Rp${orderData.total.toLocaleString(
         "id-ID"
       )}*`;
@@ -265,7 +264,7 @@ Joni; 08123456789; Jl. Mawar No. 1, Serpong
         return;
       }
 
-      // (BARU) Validasi Input
+      // Validasi Input
       const parts = contact.text.split(";");
       if (parts.length !== 3) {
         await bot.sendMessage(
@@ -280,7 +279,6 @@ Joni; 08123456789; Jl. Mawar No. 1, Serpong
       const hp = parts[1] ? parts[1].trim() : "";
       const alamat = parts[2] ? parts[2].trim() : "";
 
-      // Validasi sederhana: Nama dan Alamat tidak boleh kosong
       if (!nama || !alamat) {
         await bot.sendMessage(
           chatId,
@@ -289,9 +287,7 @@ Joni; 08123456789; Jl. Mawar No. 1, Serpong
         askForContactInfo(chatId); // Minta ulang
         return;
       }
-      // Validasi nomor HP (minimal 7 digit angka, boleh ada + di depan)
       if (!/^\+?\d{7,}$/.test(hp.replace(/\s|-/g, ""))) {
-        // Hapus spasi/strip sebelum tes
         await bot.sendMessage(
           chatId,
           "Nomor HP tidak valid (minimal 7 digit angka). Silakan coba lagi."
@@ -301,7 +297,7 @@ Joni; 08123456789; Jl. Mawar No. 1, Serpong
       }
 
       // Simpan jika valid
-      pendingOrders[chatId].contactText = contact.text; // Simpan teks asli
+      pendingOrders[chatId].contactText = contact.text;
 
       // Tampilkan konfirmasi
       await bot.sendMessage(
@@ -341,17 +337,15 @@ Apakah data di atas sudah benar?
 // Bagian Fungsi Order LAYANAN JASA (Dengan Hapus Item)
 // =============================
 
-// (UBAH) Menambah tombol hapus di keyboard
 function buildServicesKeyboard(chatId) {
   const keyboard = [];
   const serviceCart = serviceCarts[chatId];
   const productCart = productCarts[chatId];
 
-  // (BARU) Tampilkan item di keranjang dengan tombol hapus
   if (serviceCart && serviceCart.items.length > 0) {
     keyboard.push([
       { text: "--- Keranjang Layanan ---", callback_data: "ignore" },
-    ]); // Separator
+    ]);
     serviceCart.items.forEach((item, index) => {
       keyboard.push([
         {
@@ -362,11 +356,11 @@ function buildServicesKeyboard(chatId) {
     });
     keyboard.push([
       { text: "--- Pilih Layanan Baru ---", callback_data: "ignore" },
-    ]); // Separator
+    ]);
   }
 
   for (const serviceName in jasaLaundry) {
-    const safeServiceName = serviceName.replace(/ /g, "-");
+    const safeServiceName = serviceName.replace(/ /g, "-").replace(/\//g, "_"); // Ganti / juga
     keyboard.push([
       {
         text: `👕 ${serviceName}`,
@@ -401,7 +395,6 @@ function buildServicesKeyboard(chatId) {
   return { reply_markup: { inline_keyboard: keyboard } };
 }
 
-// (Kode fungsi showServiceQuantitySelector tidak berubah)
 async function showServiceQuantitySelector(
   chatId,
   serviceName,
@@ -416,7 +409,7 @@ async function showServiceQuantitySelector(
 
   const unit = service.unit;
   let qty = currentQuantity;
-  const safeServiceName = serviceName.replace(/ /g, "-");
+  const safeServiceName = serviceName.replace(/ /g, "-").replace(/\//g, "_"); // Ganti / juga
 
   let text = `🧺 Pilih jumlah untuk *${serviceName}*:\n\n*Jumlah Saat Ini: ${qty} ${unit}*`;
   let keyboard = [];
@@ -448,7 +441,6 @@ async function showServiceQuantitySelector(
       });
     }
   } else {
-    // unit === 'pcs'
     row1.push({
       text: "+1 pcs",
       callback_data: `qty_update_${safeServiceName}_${qty + 1}`,
@@ -506,7 +498,6 @@ async function showServiceQuantitySelector(
   }
 }
 
-// (UBAH) Tampilkan keranjang dengan lebih detail
 async function showServiceOrderMenu(chatId, messagePrefix = "") {
   if (!serviceCarts[chatId]) {
     serviceCarts[chatId] = { items: [], messageId: null };
@@ -526,7 +517,6 @@ async function showServiceOrderMenu(chatId, messagePrefix = "") {
     text += "  _(Kosong)_\n";
   } else {
     serviceCart.items.forEach((item, index) => {
-      // (UBAH) Gunakan forEach untuk index
       const subtotal = item.price * item.quantity;
       serviceTotal += subtotal;
       text += `  ${index + 1}. ${item.name} (${item.quantity}${
@@ -546,9 +536,9 @@ async function showServiceOrderMenu(chatId, messagePrefix = "") {
     "id-ID"
   )}*`;
 
-  text += "\n\nSilakan pilih layanan untuk ditambahkan/dihapus:"; // (UBAH)
+  text += "\n\nSilakan pilih layanan untuk ditambahkan/dihapus:";
 
-  const keyboard = buildServicesKeyboard(chatId); // Keyboard sudah diubah
+  const keyboard = buildServicesKeyboard(chatId);
   const messageIdToUse = serviceCart.messageId || productCart.messageId;
 
   try {
@@ -571,12 +561,11 @@ async function showServiceOrderMenu(chatId, messagePrefix = "") {
     }
   } catch (error) {
     console.error("Error di showServiceOrderMenu:", error.message);
-    // Fallback jika error (kirim pesan baru)
     if (
       error.code === "ETELEGRAM" &&
       error.message.includes("message is not modified")
     ) {
-      // Abaikan error ini jika pesan tidak berubah
+      // Abaikan
     } else if (
       error.code === "ETELEGRAM" &&
       error.message.includes("message to edit not found")
@@ -591,7 +580,6 @@ async function showServiceOrderMenu(chatId, messagePrefix = "") {
       if (productCarts[chatId])
         productCarts[chatId].messageId = sentMessage.message_id;
     } else {
-      // Error lain, coba kirim pesan baru sebagai fallback
       try {
         const sentMessage = await bot.sendMessage(chatId, text, {
           parse_mode: "Markdown",
@@ -609,20 +597,18 @@ async function showServiceOrderMenu(chatId, messagePrefix = "") {
 }
 
 // =============================
-// (UBAH) Bagian Fungsi Order PRODUK (Dengan Hapus Item)
+// Bagian Fungsi Order PRODUK (Dengan Hapus Item)
 // =============================
 
-// (UBAH) Menambah tombol hapus di keyboard
 function buildProductsKeyboard(chatId) {
   const keyboard = [];
   const serviceCart = serviceCarts[chatId];
   const productCart = productCarts[chatId];
 
-  // (BARU) Tampilkan item di keranjang dengan tombol hapus
   if (productCart && productCart.items.length > 0) {
     keyboard.push([
       { text: "--- Keranjang Produk ---", callback_data: "ignore" },
-    ]); // Separator
+    ]);
     productCart.items.forEach((item, index) => {
       keyboard.push([
         {
@@ -633,11 +619,15 @@ function buildProductsKeyboard(chatId) {
     });
     keyboard.push([
       { text: "--- Pilih Produk Baru ---", callback_data: "ignore" },
-    ]); // Separator
+    ]);
   }
 
   for (const productName in productsData) {
-    const safeProductName = productName.replace(/ /g, "-");
+    const safeProductName = productName
+      .replace(/ /g, "-")
+      .replace(/\//g, "_")
+      .replace(/\(/g, "__")
+      .replace(/\)/g, "___"); // Handle / and ()
     keyboard.push([
       {
         text: `🧴 ${productName}`,
@@ -675,7 +665,6 @@ function buildProductsKeyboard(chatId) {
   return { reply_markup: { inline_keyboard: keyboard } };
 }
 
-// (Kode fungsi showProductQuantitySelector tidak berubah)
 async function showProductQuantitySelector(
   chatId,
   productName,
@@ -690,7 +679,11 @@ async function showProductQuantitySelector(
 
   const unit = product.unit;
   let qty = currentQuantity;
-  const safeProductName = productName.replace(/ /g, "-");
+  const safeProductName = productName
+    .replace(/ /g, "-")
+    .replace(/\//g, "_")
+    .replace(/\(/g, "__")
+    .replace(/\)/g, "___"); // Handle / and ()
 
   let text = `🧴 Pilih jumlah untuk *${productName}*:\n\n*Jumlah Saat Ini: ${qty} ${unit}*`;
   let keyboard = [];
@@ -759,7 +752,6 @@ async function showProductQuantitySelector(
   }
 }
 
-// (UBAH) Tampilkan keranjang dengan lebih detail
 async function showProductOrderMenu(chatId, messagePrefix = "") {
   if (!serviceCarts[chatId]) {
     serviceCarts[chatId] = { items: [], messageId: null };
@@ -779,7 +771,6 @@ async function showProductOrderMenu(chatId, messagePrefix = "") {
     text += "  _(Kosong)_\n";
   } else {
     productCart.items.forEach((item, index) => {
-      // (UBAH)
       const subtotal = item.price * item.quantity;
       productTotal += subtotal;
       text += `  ${index + 1}. ${item.name} (${item.quantity}${
@@ -799,9 +790,9 @@ async function showProductOrderMenu(chatId, messagePrefix = "") {
     "id-ID"
   )}*`;
 
-  text += "\n\nSilakan pilih produk untuk ditambahkan/dihapus:"; // (UBAH)
+  text += "\n\nSilakan pilih produk untuk ditambahkan/dihapus:";
 
-  const keyboard = buildProductsKeyboard(chatId); // Keyboard sudah diubah
+  const keyboard = buildProductsKeyboard(chatId);
   const messageIdToUse = productCart.messageId || serviceCart.messageId;
 
   try {
@@ -824,12 +815,12 @@ async function showProductOrderMenu(chatId, messagePrefix = "") {
     }
   } catch (error) {
     console.error("Error di showProductOrderMenu:", error.message);
-    // Fallback jika error (kirim pesan baru)
+    // Fallback
     if (
       error.code === "ETELEGRAM" &&
       error.message.includes("message is not modified")
     ) {
-      // Abaikan error ini jika pesan tidak berubah
+      // Abaikan
     } else if (
       error.code === "ETELEGRAM" &&
       error.message.includes("message to edit not found")
@@ -844,7 +835,6 @@ async function showProductOrderMenu(chatId, messagePrefix = "") {
       if (productCarts[chatId])
         productCarts[chatId].messageId = sentMessage.message_id;
     } else {
-      // Error lain, coba kirim pesan baru sebagai fallback
       try {
         const sentMessage = await bot.sendMessage(chatId, text, {
           parse_mode: "Markdown",
@@ -894,27 +884,26 @@ bot.onText(/\/start/, (msg) => {
 // =============================
 // (UBAH) Fungsi Konfirmasi Akhir (Gabungan, Notif Admin)
 // =============================
-async function sendFinalConfirmationAndReset(chatId, paymentInfoText) {
+// (UBAH) Fungsi ini sekarang hanya mengirim pesan, tidak mereset
+async function sendFinalConfirmationMessage(chatId, paymentInfoText) {
   try {
     const orderData = pendingOrders[chatId];
-    // console.log(`[sendFinalConfirmationAndReset] chatId: ${chatId}, Received orderData:`, JSON.stringify(orderData, null, 2));
 
     if (
       !orderData ||
       !orderData.contactText ||
-      !orderData.details || // Check details
+      !orderData.details ||
       typeof orderData.total === "undefined"
     ) {
       console.error(
-        `[sendFinalConfirmationAndReset] chatId: ${chatId}, Order data incomplete!`,
+        `[sendFinalConfirmationMessage] chatId: ${chatId}, Order data incomplete!`,
         JSON.stringify(orderData, null, 2)
       );
       await bot.sendMessage(
         chatId,
-        "Maaf, terjadi kesalahan. Data order tidak lengkap. Silakan ulangi dari /start.",
-        mainMenu
+        "Maaf, terjadi kesalahan. Data order tidak lengkap. Silakan ulangi dari /start."
       );
-      if (orderData) delete pendingOrders[chatId];
+      // Jangan hapus pending order di sini, biarkan handler admin yg bersihkan
       return;
     }
 
@@ -923,45 +912,18 @@ async function sendFinalConfirmationAndReset(chatId, paymentInfoText) {
       details: orderDetails,
       total,
       deliveryFee,
-      deliveryMethod, // Ambil metode pengiriman
     } = orderData;
     const originalTotal = total - (deliveryFee || 0);
-
-    // console.log(`[sendFinalConfirmationAndReset] chatId: ${chatId}, Final orderDetails value before message:`, orderDetails);
 
     const parts = contactText.split(";");
     const nama = parts[0] ? parts[0].trim() : "[Belum diisi]";
     const hp = parts[1] ? parts[1].trim() : "[Belum diisi]";
     const alamat = parts[2] ? parts[2].trim() : "[Belum diisi]";
 
-    // (BARU) Format Pesan Admin
-    const adminMessage = `
-🔔 *Pesanan Baru Diterima!* 🔔
-
-*Pelanggan:*
-Nama: \`${nama}\`
-HP: \`${hp}\`
-Alamat: \`${alamat}\`
-
-*Pesanan:*
-\`\`\`
-${orderDetails}
-\`\`\`
-Subtotal: Rp${originalTotal.toLocaleString("id-ID")}
-Ongkir (${deliveryMethod || "Ambil Sendiri"}): Rp${(
-      deliveryFee || 0
-    ).toLocaleString("id-ID")}
-*Total: Rp${total.toLocaleString("id-ID")}*
-
-*Pembayaran:* \`${paymentInfoText}\` ${
-      orderData.waitingForProof ? "(Menunggu Verifikasi Bukti)" : ""
-    }
-`;
-
     let finalText = `
 Terima kasih ${nama.split(" ")[0]}! 🙏  
 
-Pesanan Anda telah kami catat. Admin kami akan segera menghubungi kamu.
+Pesanan Anda telah dikonfirmasi oleh admin. Kami akan segera menghubungi Anda untuk proses selanjutnya.
 
 Berikut adalah *ringkasan pesanan* Anda:
 \`\`\`
@@ -994,13 +956,10 @@ ${paymentInfoText}
 \`\`\`
 `;
 
-    if (orderData.waitingForProof) {
+    if (orderData.status === "PAYMENT_CONFIRMED") {
+      // Cek status konfirmasi
       finalText += `
-*(Bukti transfer Anda telah diterima dan akan segera diperiksa oleh admin)*
-`;
-    } else if (paymentInfoText !== paymentDetails.cod) {
-      finalText += `
-*(Silakan lakukan pembayaran dan kirim bukti transfer ke Admin kami)*
+*(Pembayaran Anda telah dikonfirmasi oleh admin)*
 `;
     }
 
@@ -1013,31 +972,15 @@ ${paymentInfoText}
 🧺 Terima kasih sudah order di Gabe Laundry! 💚
 `;
 
-    // Kirim konfirmasi ke user
     await bot.sendMessage(chatId, finalText, { parse_mode: "Markdown" });
-
-    // (BARU) Kirim notifikasi ke admin jika ID ada
-    if (adminChatId) {
-      try {
-        await bot.sendMessage(adminChatId, adminMessage, {
-          parse_mode: "Markdown",
-        });
-      } catch (adminError) {
-        console.error("Gagal mengirim notifikasi ke admin:", adminError);
-      }
-    }
   } catch (error) {
-    console.error("Error di sendFinalConfirmationAndReset:", error);
+    console.error("Error di sendFinalConfirmationMessage:", error);
     await bot.sendMessage(
       chatId,
       "Terjadi error saat mengirim konfirmasi akhir. Mohon hubungi admin."
     );
-  } finally {
-    if (pendingOrders[chatId]) {
-      delete pendingOrders[chatId];
-    }
-    sendStartMessage(chatId);
   }
+  // Tidak ada finally block, reset dilakukan oleh handler admin
 }
 
 // =============================
@@ -1048,7 +991,7 @@ bot.on("callback_query", async (query) => {
   const action = query.data;
   const messageId = query.message.message_id;
 
-  // (BARU) Handler untuk tombol Hapus Item
+  // Handler untuk tombol Hapus Item
   if (action.startsWith("cart_remove_")) {
     const parts = action.split("_");
     const type = parts[2]; // 'service' or 'product'
@@ -1083,12 +1026,78 @@ bot.on("callback_query", async (query) => {
     return bot.answerCallbackQuery(query.id);
   }
 
+  // (BARU) Handler untuk konfirmasi/tolak dari ADMIN
+  if (
+    action.startsWith("admin_confirm_") ||
+    action.startsWith("admin_reject_")
+  ) {
+    // Pastikan ini dari admin
+    if (chatId.toString() !== adminChatId) {
+      return bot.answerCallbackQuery(query.id, { text: "Anda bukan admin." });
+    }
+
+    const parts = action.split("_");
+    const decision = parts[1]; // 'confirm' or 'reject'
+    const customerChatId = parts[2]; // Ambil ID customer dari callback data
+
+    const orderData = pendingOrders[customerChatId];
+
+    if (!orderData || orderData.status !== "WAITING_ADMIN_CONFIRMATION") {
+      await bot.editMessageText(
+        `Pesanan untuk ${customerChatId} sudah tidak valid atau sudah diproses.`,
+        {
+          chat_id: adminChatId,
+          message_id: messageId,
+          reply_markup: null, // Hapus tombol
+        }
+      );
+      return bot.answerCallbackQuery(query.id);
+    }
+
+    if (decision === "confirm") {
+      orderData.status = "PAYMENT_CONFIRMED"; // Update status
+      await sendFinalConfirmationMessage(
+        customerChatId,
+        orderData.paymentMethod
+      ); // Kirim ke customer
+      await bot.editMessageText(
+        `✅ Pembayaran untuk pesanan ${customerChatId} telah dikonfirmasi.`,
+        {
+          chat_id: adminChatId,
+          message_id: messageId, // Edit pesan admin
+          reply_markup: null, // Hapus tombol
+        }
+      );
+      // Reset setelah konfirmasi
+      delete pendingOrders[customerChatId];
+      sendStartMessage(customerChatId);
+    } else if (decision === "reject") {
+      orderData.status = "PAYMENT_REJECTED"; // Update status
+      await bot.sendMessage(
+        customerChatId,
+        `❌ Maaf, pembayaran Anda ditolak oleh admin. Mohon periksa kembali bukti transfer atau hubungi admin.`
+      );
+      await bot.editMessageText(
+        `❌ Pembayaran untuk pesanan ${customerChatId} telah ditolak.`,
+        {
+          chat_id: adminChatId,
+          message_id: messageId, // Edit pesan admin
+          reply_markup: null, // Hapus tombol
+        }
+      );
+      // Di sini kita hapus pending order, user harus /start lagi
+      delete pendingOrders[customerChatId];
+      // sendStartMessage(customerChatId); // Opsional: reset atau biarkan user hubungi admin
+    }
+    return bot.answerCallbackQuery(query.id);
+  }
+
   // ===================================
   // ALUR ORDER LAYANAN (SERVICES)
   // ===================================
   if (action.startsWith("order_select_")) {
     const safeServiceName = action.substring("order_select_".length);
-    const serviceName = safeServiceName.replace(/-/g, " ");
+    const serviceName = safeServiceName.replace(/-/g, " ").replace(/_/g, "/");
     const service = jasaLaundry[serviceName];
 
     if (!service) {
@@ -1110,7 +1119,7 @@ bot.on("callback_query", async (query) => {
     const parts = action.split("_");
     const quantity = parseFloat(parts[parts.length - 1]);
     const safeServiceName = parts.slice(2, -1).join("_");
-    const serviceName = safeServiceName.replace(/-/g, " ");
+    const serviceName = safeServiceName.replace(/-/g, " ").replace(/_/g, "/");
     if (isNaN(quantity)) {
       console.error("Error parsing quantity dari callback:", action);
       return bot.answerCallbackQuery(query.id, { text: "Error jumlah!" });
@@ -1123,7 +1132,7 @@ bot.on("callback_query", async (query) => {
     const parts = action.split("_");
     const quantity = parseFloat(parts[parts.length - 1]);
     const safeServiceName = parts.slice(2, -1).join("_");
-    const serviceName = safeServiceName.replace(/-/g, " ");
+    const serviceName = safeServiceName.replace(/-/g, " ").replace(/_/g, "/");
     const service = jasaLaundry[serviceName];
 
     if (!service || isNaN(quantity) || quantity <= 0) {
@@ -1159,7 +1168,11 @@ bot.on("callback_query", async (query) => {
 
   if (action.startsWith("product_select_")) {
     const safeProductName = action.substring("product_select_".length);
-    const productName = safeProductName.replace(/-/g, " ");
+    const productName = safeProductName
+      .replace(/-/g, " ")
+      .replace(/_/g, "/")
+      .replace(/__/g, "(")
+      .replace(/___/g, ")");
     const product = productsData[productName];
 
     if (!product) {
@@ -1181,7 +1194,11 @@ bot.on("callback_query", async (query) => {
     const parts = action.split("_");
     const quantity = parseFloat(parts[parts.length - 1]);
     const safeProductName = parts.slice(3, -1).join("_");
-    const productName = safeProductName.replace(/-/g, " ");
+    const productName = safeProductName
+      .replace(/-/g, " ")
+      .replace(/_/g, "/")
+      .replace(/__/g, "(")
+      .replace(/___/g, ")");
     if (isNaN(quantity)) {
       console.error("Error parsing quantity dari callback:", action);
       return bot.answerCallbackQuery(query.id, { text: "Error jumlah!" });
@@ -1194,7 +1211,11 @@ bot.on("callback_query", async (query) => {
     const parts = action.split("_");
     const quantity = parseFloat(parts[parts.length - 1]);
     const safeProductName = parts.slice(3, -1).join("_");
-    const productName = safeProductName.replace(/-/g, " ");
+    const productName = safeProductName
+      .replace(/-/g, " ")
+      .replace(/_/g, "/")
+      .replace(/__/g, "(")
+      .replace(/___/g, ")");
     const product = productsData[productName];
 
     if (!product || isNaN(quantity) || quantity <= 0) {
@@ -1388,7 +1409,7 @@ Mau lanjut checkout?
       const total = pendingOrders[chatId].total;
 
       // Set state
-      pendingOrders[chatId].waitingForProof = true;
+      pendingOrders[chatId].status = "WAITING_PROOF"; // (UBAH)
       pendingOrders[chatId].paymentMethod = paymentInfoText;
 
       await bot.editMessageText(
@@ -1619,7 +1640,6 @@ Setelah selesai, silakan *kirim foto bukti transfer* Anda di sini.`,
           );
           break;
         }
-        // Panggil ulang askForContactInfo untuk menampilkan ulang data + tombol konfirmasi
         // Hapus pesan menu pembayaran dulu
         try {
           await bot.deleteMessage(chatId, messageId);
@@ -1628,7 +1648,21 @@ Setelah selesai, silakan *kirim foto bukti transfer* Anda di sini.`,
         break;
 
       case "payment_cod":
-        await sendFinalConfirmationAndReset(chatId, paymentDetails.cod);
+        // (UBAH) COD langsung kirim konfirmasi, tapi set status dulu
+        if (pendingOrders[chatId]) {
+          pendingOrders[chatId].status = "PAYMENT_CONFIRMED"; // Anggap COD langsung confirmed
+          pendingOrders[chatId].paymentMethod = paymentDetails.cod; // Simpan metode
+          await sendFinalConfirmationMessage(chatId, paymentDetails.cod); // Kirim pesan
+          // Reset setelah kirim
+          delete pendingOrders[chatId];
+          sendStartMessage(chatId);
+        } else {
+          await bot.sendMessage(
+            chatId,
+            "Maaf, order COD Anda kedaluwarsa.",
+            mainMenu
+          );
+        }
         break;
       case "payment_bca":
         await askForProof(chatId, messageId, "bca");
@@ -1713,8 +1747,13 @@ function fallback(chatId) {
   if (serviceCarts[chatId] || productCarts[chatId]) {
     return;
   }
-  if (pendingOrders[chatId] && pendingOrders[chatId].waitingForProof) {
-    return; // Jangan kirim fallback
+  // Cek juga status order pending
+  if (
+    pendingOrders[chatId] &&
+    (pendingOrders[chatId].status === "WAITING_PROOF" ||
+      pendingOrders[chatId].status === "WAITING_ADMIN_CONFIRMATION")
+  ) {
+    return;
   }
 
   bot.sendMessage(
@@ -1727,36 +1766,117 @@ Silakan pilih menu berikut:
   );
 }
 
-// Global Photo Handler
+// (UBAH) Global Photo Handler (Kirim ke Admin + Tombol)
 bot.on("photo", async (msg) => {
   const chatId = msg.chat.id;
 
-  if (pendingOrders[chatId] && pendingOrders[chatId].waitingForProof) {
-    const paymentInfoText = pendingOrders[chatId].paymentMethod;
+  if (
+    pendingOrders[chatId] &&
+    pendingOrders[chatId].status === "WAITING_PROOF"
+  ) {
+    const orderData = pendingOrders[chatId];
+    const paymentInfoText = orderData.paymentMethod;
+    const contactText = orderData.contactText;
+    const orderDetails = orderData.details;
+    const total = orderData.total;
+    const deliveryFee = orderData.deliveryFee || 0;
+    const originalTotal = total - deliveryFee;
 
+    const photoFileId = msg.photo[msg.photo.length - 1].file_id;
+
+    // Beri tahu user untuk menunggu
     await bot.sendMessage(
       chatId,
-      "✅ Bukti transfer diterima! Pesanan Anda sedang kami proses."
+      "✅ Bukti transfer diterima. Mohon tunggu konfirmasi dari admin ya..."
     );
 
-    // Kirim bukti foto ke admin jika ID ada
+    // Kirim bukti foto + detail + tombol ke admin jika ID ada
     if (adminChatId) {
       try {
-        await bot.forwardMessage(adminChatId, chatId, msg.message_id);
-        await bot.sendMessage(
-          adminChatId,
-          `Bukti transfer diterima dari chat ID: ${chatId}. Mohon verifikasi pesanan di atas.`
-        );
+        // Parsing data kontak lagi untuk caption
+        const parts = contactText.split(";");
+        const nama = parts[0] ? parts[0].trim() : "[Nama Tdk Ada]";
+        const hp = parts[1] ? parts[1].trim() : "[HP Tdk Ada]";
+
+        const adminCaption = `
+*Bukti Transfer Perlu Dikonfirmasi*
+----------------------
+Dari: ${nama} (${hp})
+Chat ID: ${chatId}
+
+*Pesanan:*
+\`\`\`
+${orderDetails}
+\`\`\`
+Subtotal: Rp${originalTotal.toLocaleString("id-ID")}
+Ongkir: Rp${deliveryFee.toLocaleString("id-ID")}
+*Total: Rp${total.toLocaleString("id-ID")}*
+
+*Pembayaran:* \`${paymentInfoText}\`
+`;
+        // Tombol untuk admin
+        const adminConfirmKeyboard = {
+          inline_keyboard: [
+            [
+              {
+                text: "✅ Konfirmasi Pembayaran",
+                callback_data: `admin_confirm_${chatId}`,
+              },
+              {
+                text: "❌ Tolak Pembayaran",
+                callback_data: `admin_reject_${chatId}`,
+              },
+            ],
+          ],
+        };
+
+        // Kirim foto DENGAN caption & tombol ke admin
+        const sentAdminMsg = await bot.sendPhoto(adminChatId, photoFileId, {
+          caption: adminCaption,
+          parse_mode: "Markdown",
+          reply_markup: adminConfirmKeyboard,
+        });
+
+        // Simpan ID pesan admin untuk diedit nanti
+        pendingOrders[chatId].adminMessageId = sentAdminMsg.message_id;
+        pendingOrders[chatId].status = "WAITING_ADMIN_CONFIRMATION"; // Update status
       } catch (e) {
-        console.error("Gagal forward bukti transfer:", e);
+        console.error("Gagal kirim bukti transfer ke admin:", e);
+        await bot.sendMessage(
+          chatId,
+          "Gagal mengirim bukti ke admin. Mohon hubungi admin secara manual."
+        );
+        // Tetap set status menunggu agar tidak fallback
+        pendingOrders[chatId].status = "WAITING_ADMIN_CONFIRMATION";
+        // Kirim pesan error ke admin jika mungkin
+        try {
+          await bot.sendMessage(
+            adminChatId,
+            `Gagal menerima foto bukti transfer dari chat ID ${chatId}. Error: ${e.message}. Silakan cek chat pelanggan.`
+          );
+        } catch (e2) {
+          console.error("Gagal kirim pesan error ke admin:", e2);
+        }
       }
+    } else {
+      await bot.sendMessage(
+        chatId,
+        "Tidak dapat mengirim bukti ke admin (ID Admin tidak diset). Mohon hubungi admin secara manual."
+      );
+      // Langsung konfirmasi saja jika tidak ada admin? Atau biarkan menggantung?
+      // Untuk sekarang, kita konfirmasi saja agar flow user selesai
+      orderData.status = "PAYMENT_CONFIRMED"; // Anggap confirmed
+      await sendFinalConfirmationMessage(chatId, paymentInfoText);
+      // Reset
+      delete pendingOrders[chatId];
+      sendStartMessage(chatId);
     }
 
-    await sendFinalConfirmationAndReset(chatId, paymentInfoText);
+    // TIDAK memanggil sendFinalConfirmationAndReset di sini lagi
   } else {
     await bot.sendMessage(
       chatId,
-      "Maaf, saya tidak mengerti mengapa Anda mengirim foto. Silakan gunakan menu."
+      "Maaf, saya tidak mengerti mengapa Anda mengirim foto saat ini. Silakan gunakan menu."
     );
   }
 });
@@ -1769,10 +1889,25 @@ bot.on("text", (msg) => {
 
   const chatId = msg.chat.id;
 
-  if (pendingOrders[chatId] && pendingOrders[chatId].waitingForProof) {
+  // Cek status tunggu bukti bayar
+  if (
+    pendingOrders[chatId] &&
+    pendingOrders[chatId].status === "WAITING_PROOF"
+  ) {
     bot.sendMessage(
       chatId,
       "Saya sedang menunggu *foto* bukti transfer Anda. Silakan kirimkan fotonya. 📸"
+    );
+    return;
+  }
+  // (BARU) Cek status tunggu konfirmasi admin
+  if (
+    pendingOrders[chatId] &&
+    pendingOrders[chatId].status === "WAITING_ADMIN_CONFIRMATION"
+  ) {
+    bot.sendMessage(
+      chatId,
+      "Pembayaran Anda sedang menunggu konfirmasi admin. Mohon ditunggu ya."
     );
     return;
   }
@@ -1790,7 +1925,8 @@ bot.on("text", (msg) => {
     }
   }
 
-  if (!hasOnceListener) {
+  // Jika tidak ada listener 'once' DAN tidak dalam state pending lain
+  if (!hasOnceListener && !pendingOrders[chatId]) {
     fallback(chatId);
   }
 });
